@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QTableWidget, QTableWidgetItem, QTextEdit,
     QDialog, QLineEdit, QFormLayout, QMessageBox, QHeaderView,
-    QSplitter, QGroupBox, QFrame, QScrollArea, QSizePolicy
+    QSplitter, QGroupBox, QFrame, QScrollArea, QSizePolicy, QTabWidget
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread
 from PyQt6.QtGui import QFont, QPalette, QColor, QIcon
@@ -33,34 +33,48 @@ class ServerThread(QThread):
 
 
 class CandidateDialog(QDialog):
-    """Dialog zum Hinzufügen/Bearbeiten von Kandidaten"""
+    """Dialog zum Hinzufügen (Bulk als Standard) bzw. Bearbeiten von Kandidaten"""
 
     def __init__(self, parent=None, candidate=None):
         super().__init__(parent)
         self.candidate = candidate
-        self.setWindowTitle("Kandidat bearbeiten" if candidate else "Kandidat hinzufügen")
+        self.names = []
+        self.setWindowTitle("Kandidat bearbeiten" if candidate else "Kandidaten hinzufügen")
         self.setMinimumWidth(500)
         self.setup_ui()
 
     def setup_ui(self):
-        layout = QFormLayout()
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(15)
+        main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(20, 20, 20, 20)
+        main_layout.setSpacing(15)
 
-        # Name Input
-        self.name_input = QLineEdit()
-        self.name_input.setPlaceholderText("Name des Kandidaten")
         if self.candidate:
+            # === BEARBEITEN-MODUS (nur Name) ===
+            form_layout = QFormLayout()
+            form_layout.setSpacing(15)
+
+            self.name_input = QLineEdit()
+            self.name_input.setPlaceholderText("Name des Kandidaten")
             self.name_input.setText(self.candidate['name'])
-        layout.addRow("Name:", self.name_input)
+            self.name_input.returnPressed.connect(self.accept)
+            form_layout.addRow("Name:", self.name_input)
 
-        # Beschreibung Input
-        self.desc_input = QTextEdit()
-        self.desc_input.setPlaceholderText("Optionale Beschreibung")
-        self.desc_input.setMaximumHeight(100)
-        if self.candidate:
-            self.desc_input.setPlainText(self.candidate.get('description', ''))
-        layout.addRow("Beschreibung:", self.desc_input)
+            main_layout.addLayout(form_layout)
+        else:
+            # === HINZUFÜGEN-MODUS (Bulk-Eingabe als Standard) ===
+            bulk_label = QLabel("Kandidatennamen (ein Name pro Zeile):")
+            bulk_label.setStyleSheet("font-weight: bold; font-size: 13px;")
+            main_layout.addWidget(bulk_label)
+
+            self.bulk_text_input = QTextEdit()
+            self.bulk_text_input.setPlaceholderText("Jeffery Epstein")
+            self.bulk_text_input.setMinimumHeight(180)
+            self.bulk_text_input.textChanged.connect(self._update_counter)
+            main_layout.addWidget(self.bulk_text_input)
+
+            self.counter_label = QLabel("0 Kandidaten erkannt")
+            self.counter_label.setStyleSheet("color: #94a3b8; font-size: 12px; font-weight: bold;")
+            main_layout.addWidget(self.counter_label)
 
         # Buttons
         button_layout = QHBoxLayout()
@@ -100,15 +114,55 @@ class CandidateDialog(QDialog):
 
         button_layout.addWidget(save_btn)
         button_layout.addWidget(cancel_btn)
-        layout.addRow(button_layout)
+        main_layout.addLayout(button_layout)
 
-        self.setLayout(layout)
+        self.setLayout(main_layout)
+
+    def _update_counter(self):
+        """Aktualisiert die Zähler-Anzeige"""
+        text = self.bulk_text_input.toPlainText()
+        raw_names = [line.strip() for line in text.splitlines() if line.strip()]
+        unique_names = list(dict.fromkeys(raw_names))
+        total_unique = len(unique_names)
+        duplicates = len(raw_names) - total_unique
+
+        if duplicates > 0:
+            self.counter_label.setText(
+                f"{total_unique} Kandidat{'en' if total_unique != 1 else ''} erkannt ({duplicates} Duplikat{'e' if duplicates != 1 else ''} ignoriert)"
+            )
+        else:
+            self.counter_label.setText(
+                f"{total_unique} Kandidat{'en' if total_unique != 1 else ''} erkannt"
+            )
+
+    def accept(self):
+        """Validierung beim Speichern"""
+        if self.candidate:
+            name = self.name_input.text().strip()
+            if not name:
+                QMessageBox.warning(self, "Fehler", "Name darf nicht leer sein.")
+                return
+            self.names = [name]
+        else:
+            raw_names = [line.strip() for line in self.bulk_text_input.toPlainText().splitlines() if line.strip()]
+            unique_names = list(dict.fromkeys(raw_names))
+            if not unique_names:
+                QMessageBox.warning(self, "Fehler", "Bitte mindestens einen Kandidatennamen eingeben.")
+                return
+            self.names = unique_names
+
+        super().accept()
+
+    def get_names(self) -> list:
+        """Gibt die Liste der Kandidatennamen zurück"""
+        return self.names
 
     def get_data(self):
-        """Gibt eingegebene Daten zurück"""
+        """Gibt eingegebene Daten zurück (Abwärtskompatibilität)"""
         return {
-            'name': self.name_input.text().strip(),
-            'description': self.desc_input.toPlainText().strip()
+            'name': self.names[0] if self.names else '',
+            'names': self.names,
+            'description': ''
         }
 
 
@@ -279,10 +333,10 @@ class AdminGUI(QMainWindow):
 
         # Tabelle
         self.candidates_table = QTableWidget()
-        self.candidates_table.setColumnCount(3)
-        self.candidates_table.setHorizontalHeaderLabels(["ID", "Name", "Beschreibung"])
+        self.candidates_table.setColumnCount(2)
+        self.candidates_table.setHorizontalHeaderLabels(["ID", "Name"])
+        self.candidates_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.candidates_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.candidates_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.candidates_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.candidates_table.setAlternatingRowColors(True)
 
@@ -354,10 +408,10 @@ class AdminGUI(QMainWindow):
         h_layout = QHBoxLayout()
         h_layout.setSpacing(15)
 
-        unlock_btn = QPushButton("⚡ Clients entsperren")
-        unlock_btn.clicked.connect(self.unlock_clients)
-        unlock_btn.setMinimumHeight(45)
-        h_layout.addWidget(unlock_btn)
+        self.unlock_btn = QPushButton("⚡ Clients entsperren")
+        self.unlock_btn.clicked.connect(self.unlock_clients)
+        self.unlock_btn.setMinimumHeight(45)
+        h_layout.addWidget(self.unlock_btn)
 
         reset_btn = QPushButton("↻ Wahl zurücksetzen")
         reset_btn.clicked.connect(self.reset_votes)
@@ -485,6 +539,30 @@ class AdminGUI(QMainWindow):
             QLabel {
                 color: #e2e8f0;
             }
+            QTabWidget::pane {
+                border: 1px solid #334155;
+                border-radius: 6px;
+                background-color: #1e293b;
+                padding: 10px;
+            }
+            QTabBar::tab {
+                background-color: #0f172a;
+                color: #94a3b8;
+                padding: 8px 16px;
+                margin-right: 4px;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+                font-weight: bold;
+                font-size: 12px;
+            }
+            QTabBar::tab:selected {
+                background-color: #586cc7;
+                color: white;
+            }
+            QTabBar::tab:hover:!selected {
+                background-color: #334155;
+                color: #e2e8f0;
+            }
             QDialog {
                 background-color: #1e293b;
             }
@@ -536,21 +614,22 @@ class AdminGUI(QMainWindow):
 
             self.candidates_table.setItem(row, 0, QTableWidgetItem(str(candidate['id'])))
             self.candidates_table.setItem(row, 1, QTableWidgetItem(candidate['name']))
-            self.candidates_table.setItem(row, 2, QTableWidgetItem(candidate.get('description', '')))
 
     def add_candidate(self):
-        """Öffnet Dialog zum Hinzufügen"""
+        """Öffnet Dialog zum Hinzufügen von Kandidaten"""
         dialog = CandidateDialog(self)
         if dialog.exec():
-            data = dialog.get_data()
-            if not data['name']:
-                QMessageBox.warning(self, "Fehler", "Name darf nicht leer sein")
+            names = dialog.get_names()
+            if not names:
                 return
 
-            self.db.add_candidate(data['name'], data['description'])
+            self.db.add_candidates(names)
             self.refresh_candidates()
             self.refresh_results()
-            QMessageBox.information(self, "Erfolg", "Kandidat hinzugefügt")
+            if len(names) == 1:
+                QMessageBox.information(self, "Erfolg", f"Kandidat '{names[0]}' hinzugefügt")
+            else:
+                QMessageBox.information(self, "Erfolg", f"{len(names)} Kandidaten erfolgreich hinzugefügt")
 
     def edit_candidate(self):
         """Öffnet Dialog zum Bearbeiten"""
@@ -564,12 +643,11 @@ class AdminGUI(QMainWindow):
 
         dialog = CandidateDialog(self, candidate)
         if dialog.exec():
-            data = dialog.get_data()
-            if not data['name']:
-                QMessageBox.warning(self, "Fehler", "Name darf nicht leer sein")
+            names = dialog.get_names()
+            if not names or not names[0]:
                 return
 
-            self.db.update_candidate(candidate['id'], data['name'], data['description'])
+            self.db.update_candidate(candidate['id'], names[0])
             self.refresh_candidates()
             self.refresh_results()
             QMessageBox.information(self, "Erfolg", "Kandidat aktualisiert")
@@ -641,29 +719,19 @@ class AdminGUI(QMainWindow):
 
     def unlock_clients(self):
         """Entsperrt Clients und löst Reload aus"""
-        reply = QMessageBox.question(
-            self, "Clients entsperren",
-            "Alle Clients für eine neue Abstimmungsrunde entsperren?\n\n"
-            "Alle Client-Browser werden zur Startseite weitergeleitet.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
+        self.db.unlock_clients()
 
-        if reply == QMessageBox.StandardButton.Yes:
-            self.db.unlock_clients()
-
-            # Sende Unlock-Broadcast über WebSocket (löst Client-Reload aus)
+        # Sende Unlock-Broadcast über WebSocket (löst Client-Reload aus, wenn Server läuft)
+        if self.server_running:
             try:
-                import asyncio
-                from websocket_manager import WebSocketManager
-
-                # Hole die WebSocket-Manager-Instanz aus der API
-                # Dies wird über den bereits laufenden Server kommuniziert
-                requests.post(f"{self.api_base}/api/admin/unlock", timeout=2)
-
+                requests.post(f"{self.api_base}/api/admin/unlock", timeout=1)
             except Exception as e:
                 print(f"WebSocket-Broadcast-Fehler: {e}")
 
-            QMessageBox.information(self, "Erfolg", "Alle Clients wurden entsperrt und neu geladen")
+        # Visuelles Feedback auf dem Button ohne Pop-Up
+        if hasattr(self, 'unlock_btn'):
+            self.unlock_btn.setText("✓ Clients entsperrt!")
+            QTimer.singleShot(1500, lambda: self.unlock_btn.setText("⚡ Clients entsperren"))
 
     def reset_votes(self):
         """Setzt Votes zurück"""
@@ -685,7 +753,7 @@ class AdminGUI(QMainWindow):
             if response.status_code == 200:
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 filename = f"abstimmung_ergebnisse_{timestamp}.xlsx"
-                
+
                 # Open file save dialog
                 from PyQt6.QtWidgets import QFileDialog
                 filepath, _ = QFileDialog.getSaveFileName(
@@ -694,11 +762,11 @@ class AdminGUI(QMainWindow):
                     str(Path.home() / "Downloads" / filename),  # Default path and filename
                     "Excel Files (*.xlsx);;All Files (*)"  # File filters
                 )
-                
+
                 # Check if user cancelled the dialog
                 if not filepath:
                     return
-                
+
                 # Ensure .xlsx extension
                 if not filepath.endswith('.xlsx'):
                     filepath += '.xlsx'

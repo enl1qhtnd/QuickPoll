@@ -15,6 +15,11 @@ class CandidateCreate(BaseModel):
     description: Optional[str] = Field(default="", max_length=1000)
 
 
+class CandidateBulkCreate(BaseModel):
+    """Model für das Erstellen mehrerer Kandidaten im Bulk"""
+    names: list[str] = Field(..., min_length=1)
+
+
 class CandidateUpdate(BaseModel):
     """Model für das Aktualisieren eines Kandidaten"""
     name: str = Field(..., min_length=1, max_length=200)

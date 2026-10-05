@@ -85,12 +85,30 @@ class Database:
             cursor = conn.cursor()
             cursor.execute(
                 "INSERT INTO candidates (name, description) VALUES (?, ?)",
-                (name, description)
+                (name.strip(), description.strip() if description else "")
             )
             candidate_id = cursor.lastrowid
             conn.commit()
             conn.close()
             return candidate_id
+
+    def add_candidates(self, names: List[str]) -> List[int]:
+        """Fügt mehrere Kandidaten im Bulk hinzu"""
+        with self.lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            candidate_ids = []
+            for name in names:
+                name_clean = name.strip()
+                if name_clean:
+                    cursor.execute(
+                        "INSERT INTO candidates (name, description) VALUES (?, ?)",
+                        (name_clean, "")
+                    )
+                    candidate_ids.append(cursor.lastrowid)
+            conn.commit()
+            conn.close()
+            return candidate_ids
 
     def get_candidates(self) -> List[Dict]:
         """Gibt alle Kandidaten zurück"""

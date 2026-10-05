@@ -17,7 +17,7 @@ from pathlib import Path
 
 from database import Database
 from models import (
-    Candidate, CandidateCreate, CandidateUpdate,
+    Candidate, CandidateCreate, CandidateBulkCreate, CandidateUpdate,
     VoteRequest, VoteResponse, VoteCheckRequest, VoteCheckResponse,
     VoteResult, ResultsSummary, ResetResponse, UnlockResponse,
     ServerStatus
@@ -81,6 +81,22 @@ async def create_candidate(candidate: CandidateCreate):
 
     if not created:
         raise HTTPException(status_code=500, detail="Kandidat konnte nicht erstellt werden")
+
+    return created
+
+
+@app.post("/api/candidates/bulk", response_model=List[Candidate], tags=["Kandidaten"])
+async def create_candidates_bulk(bulk: CandidateBulkCreate):
+    """Erstellt mehrere Kandidaten gleichzeitig (Bulk)"""
+    candidate_ids = db.add_candidates(bulk.names)
+
+    # Benachrichtige WebSocket-Clients
+    await ws_manager.broadcast_candidates_update()
+
+    # Hole alle erstellten Kandidaten
+    candidates = db.get_candidates()
+    id_set = set(candidate_ids)
+    created = [c for c in candidates if c['id'] in id_set]
 
     return created
 
